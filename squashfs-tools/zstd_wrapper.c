@@ -22,12 +22,47 @@
 #include <stdlib.h>
 #include <zstd.h>
 #include <zstd_errors.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "squashfs_fs.h"
 #include "zstd_wrapper.h"
 #include "compressor.h"
+#include "mksquashfs_error.h"
+
+# define errno (*__errno_location ())
+# define EMPTY_STRING ""
 
 static int compression_level = ZSTD_DEFAULT_COMPRESSION_LEVEL;
+static char* dict_name = EMPTY_STRING;
+
+/* d_size():
+	Get size of dictionary at given file path */
+size_t d_size(const char* dict_filename) 
+{
+	struct stat st_dict;
+	if(stat(dict_filename, &st_dict) == -1) {
+		BAD_ERROR("Cannot stat source dictionary %s because %s\n",
+				dict_filename, strerror(errno));    
+	}
+	return st_dict.st_size;
+}
+
+
+/* create_cdict() :
+   assumes that a dictionary has been previously built */
+ZSTD_CDict* create_cdict(const char* dict_filename, int compression_level)
+{
+    size_t const dict_size = d_size(dict_filename); 
+	void* const dict_buf = malloc(dict_size);
+    ZSTD_CDict* const cdict = ZSTD_createCDict(dict_buf, dict_size, compression_level);
+    if(cdict == NULL) {
+		BAD_ERROR("ZSTD_createCDict() failed!");
+	}
+    free(dict_buf);
+    return cdict;
+}
 
 /*
  * This function is called by the options parsing code in mksquashfs.c
@@ -64,6 +99,21 @@ static int zstd_options(char *argv[], int argc)
 		}
 
 		return 1;
+	} else if(strcmp(argv[0], "-Xdict") == 0) {
+		if(argc < 2) {
+			fprintf(stderr, "zstd: -Xdict missing dictionary"
+				"dictionary should be created using `zstd --train`\n");
+			goto failed;
+		}
+
+		dict_name = argv[1]; 
+		if(access(dict_name, F_OK) != 0) {
+			fprintf(stderr, "zstd: -Xdict given dictionary doesn't exist"
+				"dictionary should be created using `zstd --train`\n");
+			goto failed;
+		}
+
+		return 1;
 	}
 
 	return -1;
@@ -90,6 +140,7 @@ static void *zstd_dump_options(int block_size, int *size)
 		return NULL;
 
 	comp_opts.compression_level = compression_level;
+	comp_opts.dict_name = dict_name;
 
 	SQUASHFS_INSWAP_COMP_OPTS(&comp_opts);
 
@@ -140,6 +191,13 @@ static int zstd_extract_options(int block_size, void *buffer, int size)
 	}
 
 	compression_level = comp_opts->compression_level;
+	
+	if(access(comp_opts->dict_name, F_OK) != 0) {
+		fprintf(stderr, "zstd: given dictionary doesn't exist\n");
+		goto failed;
+	}
+
+	dict_name = comp_opts->dict_name;
 
 	return 0;
 
@@ -168,6 +226,15 @@ static void zstd_display_options(void *buffer, int size)
 	}
 
 	printf("\tcompression-level %d\n", comp_opts->compression_level);
+
+	if(strcmp(comp_opts->dict_name, EMPTY_STRING)){
+		if(access(dict_name, F_OK) != 0) {
+			fprintf(stderr, "zstd: given dictionary doesn't exist\n");
+			goto failed;
+		}
+		
+		printf("\tdictionary-name: %s\n", comp_opts->dict_name);
+	}	
 
 	return;
 
@@ -199,8 +266,17 @@ static int zstd_init(void **strm, int block_size, int datablock)
 static int zstd_compress(void *strm, void *dest, void *src, int size,
 			 int block_size, int *error)
 {
-	const size_t res = ZSTD_compressCCtx((ZSTD_CCtx*)strm, dest, block_size,
-					     src, size, compression_level);
+	size_t res;
+	if (strcmp(dict_name, EMPTY_STRING) != 0) {
+		ZSTD_CDict* const dict_ptr = create_cdict(dict_name, compression_level);
+		res = ZSTD_compress_usingCDict((ZSTD_CCtx*)strm, dest, block_size,
+							src, size, dict_ptr);
+
+	} else {
+		res = ZSTD_compressCCtx((ZSTD_CCtx*)strm, dest, block_size,
+							src, size, compression_level);
+	}
+
 
 	if (ZSTD_isError(res)) {
 		/* FIXME:
@@ -237,6 +313,8 @@ static void zstd_usage(FILE *stream)
 	fprintf(stream, "\t  -Xcompression-level <compression-level>\n");
 	fprintf(stream, "\t\t<compression-level> should be 1 .. %d (default "
 		"%d)\n", ZSTD_maxCLevel(), ZSTD_DEFAULT_COMPRESSION_LEVEL);
+	fprintf(stream, "\t  -Xdict <dictionary-name>\n");
+	fprintf(stream, "\t\tdictionary should be created using `zstd --train`\n");
 }
 
 struct compressor zstd_comp_ops = {

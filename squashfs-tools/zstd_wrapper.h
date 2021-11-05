@@ -34,9 +34,10 @@ extern unsigned int inswap_le32(unsigned int);
 #endif
 
 /* Default compression */
-#define ZSTD_DEFAULT_COMPRESSION_LEVEL 15
+#define ZSTD_DEFAULT_COMPRESSION_LEVEL 3
 
 struct zstd_comp_opts {
 	int compression_level;
+	char *dict_name;
 };
 #endif
