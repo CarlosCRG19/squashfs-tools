@@ -56,6 +56,12 @@ ZSTD_CDict* create_cdict(const char* dict_filename, int compression_level)
 {
     size_t const dict_size = d_size(dict_filename); 
 	void* const dict_buf = malloc(dict_size);
+
+	// Load
+	FILE* const in_file = fopen(dict_filename, "rb");
+	fread(dict_buf, 1, dict_size, in_file);
+	fclose(in_file);
+
     ZSTD_CDict* const cdict = ZSTD_createCDict(dict_buf, dict_size, compression_level);
     if(cdict == NULL) {
 		BAD_ERROR("ZSTD_createCDict() failed!");
