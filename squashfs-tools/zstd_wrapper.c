@@ -35,7 +35,18 @@
 # define EMPTY_STRING ""
 
 static int compression_level = ZSTD_DEFAULT_COMPRESSION_LEVEL;
+static int dictionary_size = 0;
 static char* dict_name = EMPTY_STRING;
+static void* dictionary;
+
+/* load_dict()
+	Load dictionary to passed buffer */ 
+void load_dict(const char* dict_filename, void* dict_buf, int dict_size)
+{
+		FILE* dict_file = fopen(dict_filename, "rb");
+		fread(dict_buf, 1, dict_size, dict_file);
+		fclose(dict_file);
+}
 
 /* d_size():
 	Get size of dictionary at given file path */
@@ -49,24 +60,14 @@ size_t d_size(const char* dict_filename)
 	return st_dict.st_size;
 }
 
-
 /* create_cdict() :
    assumes that a dictionary has been previously built */
-ZSTD_CDict* create_cdict(const char* dict_filename, int compression_level)
+ZSTD_CDict* create_cdict(void* dict_buf, int dict_size, int compression_level)
 {
-    size_t const dict_size = d_size(dict_filename); 
-	void* const dict_buf = malloc(dict_size);
-
-	// Load
-	FILE* const in_file = fopen(dict_filename, "rb");
-	fread(dict_buf, 1, dict_size, in_file);
-	fclose(in_file);
-
     ZSTD_CDict* const cdict = ZSTD_createCDict(dict_buf, dict_size, compression_level);
     if(cdict == NULL) {
 		BAD_ERROR("ZSTD_createCDict() failed!");
 	}
-    free(dict_buf);
     return cdict;
 }
 
@@ -118,6 +119,11 @@ static int zstd_options(char *argv[], int argc)
 				"dictionary should be created using `zstd --train`\n");
 			goto failed;
 		}
+		dictionary_size = d_size(dict_name);
+
+		// Dictionary Loading  
+		dictionary = malloc(dictionary_size);
+		load_dict(dict_name, dictionary, dictionary_size);
 
 		return 1;
 	}
@@ -142,11 +148,14 @@ static void *zstd_dump_options(int block_size, int *size)
 	static struct zstd_comp_opts comp_opts;
 
 	/* don't return anything if the options are all default */
-	if (compression_level == ZSTD_DEFAULT_COMPRESSION_LEVEL)
+	if (compression_level == ZSTD_DEFAULT_COMPRESSION_LEVEL && dictionary_size == 0)
 		return NULL;
 
 	comp_opts.compression_level = compression_level;
-	comp_opts.dict_name = dict_name;
+	
+	// New options
+	comp_opts.dictionary_size = dictionary_size;
+	comp_opts.dictionary = dictionary;
 
 	SQUASHFS_INSWAP_COMP_OPTS(&comp_opts);
 
@@ -180,6 +189,7 @@ static int zstd_extract_options(int block_size, void *buffer, int size)
 	if (size == 0) {
 		/* Set default values */
 		compression_level = ZSTD_DEFAULT_COMPRESSION_LEVEL;
+		dictionary_size = 0;
 		return 0;
 	}
 
@@ -198,12 +208,13 @@ static int zstd_extract_options(int block_size, void *buffer, int size)
 
 	compression_level = comp_opts->compression_level;
 	
-	if(access(comp_opts->dict_name, F_OK) != 0) {
-		fprintf(stderr, "zstd: given dictionary doesn't exist\n");
+	if (comp_opts->dictionary_size < 0) {
+		fprintf(stderr, "zstd: incorrect size of dictionary in compression"
+			"options structure\n");
 		goto failed;
 	}
 
-	dict_name = comp_opts->dict_name;
+	dictionary_size = comp_opts->dictionary_size;
 
 	return 0;
 
@@ -233,14 +244,13 @@ static void zstd_display_options(void *buffer, int size)
 
 	printf("\tcompression-level %d\n", comp_opts->compression_level);
 
-	if(strcmp(comp_opts->dict_name, EMPTY_STRING)){
-		if(access(dict_name, F_OK) != 0) {
-			fprintf(stderr, "zstd: given dictionary doesn't exist\n");
-			goto failed;
-		}
-		
-		printf("\tdictionary-name: %s\n", comp_opts->dict_name);
-	}	
+	if (comp_opts->dictionary_size < 0) {
+		fprintf(stderr, "zstd: incorrect size of dictionary in compression"
+			"options structure\n");
+		goto failed;
+	}
+
+	printf("\tdictionary-size %d\n", comp_opts->dictionary_size); 
 
 	return;
 
@@ -273,11 +283,10 @@ static int zstd_compress(void *strm, void *dest, void *src, int size,
 			 int block_size, int *error)
 {
 	size_t res;
-	if (strcmp(dict_name, EMPTY_STRING) != 0) {
-		ZSTD_CDict* const dict_ptr = create_cdict(dict_name, compression_level);
+	if (dictionary_size != 0) {
+		ZSTD_CDict* const dict_ptr = create_cdict(dictionary, dictionary_size, compression_level);
 		res = ZSTD_compress_usingCDict((ZSTD_CCtx*)strm, dest, block_size,
 							src, size, dict_ptr);
-
 	} else {
 		res = ZSTD_compressCCtx((ZSTD_CCtx*)strm, dest, block_size,
 							src, size, compression_level);

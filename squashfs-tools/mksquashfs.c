@@ -74,6 +74,8 @@
 #include "fnmatch_compat.h"
 #include "tar.h"
 
+#include "zstd_wrapper.h"
+
 int delete = FALSE;
 int quiet = FALSE;
 int fd;
@@ -6909,7 +6911,6 @@ print_sqfstar_compressor_options:
 	return 0;
 }
 
-
 int main(int argc, char *argv[])
 {
 	struct stat buf, source_buf;
@@ -7761,18 +7762,32 @@ print_compressor_options:
 		 * and set the COMP_OPT flag to show that the filesystem has
 		 * compressor specfic options
 		 */
-		if(comp_data) {
+		if(comp_data) {	
 			unsigned short c_byte = size | SQUASHFS_COMPRESSED_BIT;
-	
+
+			int l_bytes = sizeof(struct squashfs_super_block);
+			
 			SQUASHFS_INSWAP_SHORTS(&c_byte, 1);
-			write_destination(fd, sizeof(struct squashfs_super_block),
-				sizeof(c_byte), &c_byte);
-			write_destination(fd, sizeof(struct squashfs_super_block) +
-				sizeof(c_byte), size, comp_data);
-			bytes = sizeof(struct squashfs_super_block) + sizeof(c_byte)
-				+ size;
+			write_destination(fd, l_bytes, sizeof(c_byte), &c_byte);
+			l_bytes += sizeof(c_byte);
+
+			write_destination(fd, l_bytes, size, comp_data);
+			l_bytes += size;
+
+			if(strcmp(comp->name,"zstd") == 0) {
+
+				struct zstd_comp_opts *comp_data_zstd = (struct zstd_comp_opts *)comp_data;
+				if(comp_data_zstd->dictionary_size > 0) {
+					int dict_size = comp_data_zstd->dictionary_size;
+
+					write_destination(fd, l_bytes, dict_size, &comp_data_zstd->dictionary);
+					l_bytes += dict_size;
+				} 
+			}
+
+			bytes = l_bytes;
 			comp_opts = TRUE;
-		} else			
+		} else
 			bytes = sizeof(struct squashfs_super_block);
 	} else {
 		unsigned int last_directory_block, inode_dir_offset,

@@ -80,7 +80,7 @@ GZIP_SUPPORT = 1
 # To build install the library and uncomment
 # the ZSTD_SUPPORT line below.
 #
-#ZSTD_SUPPORT = 1
+ZSTD_SUPPORT = 1
 
 
 ######## Specifying default compression ########
