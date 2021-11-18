@@ -26,7 +26,6 @@ extern unsigned int inswap_le16(unsigned short);
 extern unsigned int inswap_le32(unsigned int);
 
 #define SQUASHFS_INSWAP_COMP_OPTS(s) { \
-	(s)->dictionary_size = inswap_le32((s)->dictionary_size); \
 	(s)->compression_level = inswap_le32((s)->compression_level); \
 }
 #else
@@ -38,7 +37,5 @@ extern unsigned int inswap_le32(unsigned int);
 
 struct zstd_comp_opts {
 	int compression_level;
-	int dictionary_size; 
-	void* dictionary;
 };
 #endif

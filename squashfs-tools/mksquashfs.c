@@ -74,8 +74,6 @@
 #include "fnmatch_compat.h"
 #include "tar.h"
 
-#include "zstd_wrapper.h"
-
 int delete = FALSE;
 int quiet = FALSE;
 int fd;
@@ -303,6 +301,10 @@ char *sqfstar_option_table[] = { "comp", "b", "mkfs-time", "fstime", "all-time",
 	"processors", "mem", "offset", "o", "root-time", "root-uid",
 	"root-gid", NULL
 };
+
+// GLOBAL VARIABLES FOR ZSTD DICT COMPRESSION
+void* zstd_dict;
+int zstd_dict_size = 0;
 
 static char *read_from_disk(long long start, unsigned int avail_bytes);
 static void add_old_root_entry(char *name, squashfs_inode inode,
@@ -6287,7 +6289,6 @@ int option_with_arg(char *string, char *table[])
 	return table[i] != NULL;
 }
 
-
 int sqfstar(int argc, char *argv[])
 {
 	struct stat buf;
@@ -6821,7 +6822,7 @@ print_sqfstar_compressor_options:
 	memset(dupl_block, 0, 1048576 * sizeof(struct file_info *));
 	memset(dupl_frag, 0, block_size * sizeof(struct file_info *));
 
-	comp_data = compressor_dump_options(comp, block_size, &size);
+	comp_data = compressor_dump_options(comp, block_size, &size, &zstd_dict, &zstd_dict_size);
 
 	if(!quiet)
 		printf("Creating %d.%d filesystem on %s, block size %d.\n",
@@ -7749,8 +7750,7 @@ print_compressor_options:
 
 	if(delete) {
 		int size;
-		void *comp_data = compressor_dump_options(comp, block_size,
-			&size);
+		void *comp_data = compressor_dump_options(comp, block_size, &size, &zstd_dict, &zstd_dict_size);
 
 		if(!quiet)
 			printf("Creating %d.%d filesystem on %s, block size %d.\n",
@@ -7764,28 +7764,21 @@ print_compressor_options:
 		 */
 		if(comp_data) {	
 			unsigned short c_byte = size | SQUASHFS_COMPRESSED_BIT;
-
-			int l_bytes = sizeof(struct squashfs_super_block);
-			
+	
 			SQUASHFS_INSWAP_SHORTS(&c_byte, 1);
-			write_destination(fd, l_bytes, sizeof(c_byte), &c_byte);
-			l_bytes += sizeof(c_byte);
+			write_destination(fd, sizeof(struct squashfs_super_block),
+				sizeof(c_byte), &c_byte);
+			write_destination(fd, sizeof(struct squashfs_super_block) +
+				sizeof(c_byte), size, comp_data);
 
-			write_destination(fd, l_bytes, size, comp_data);
-			l_bytes += size;
-
-			if(strcmp(comp->name,"zstd") == 0) {
-
-				struct zstd_comp_opts *comp_data_zstd = (struct zstd_comp_opts *)comp_data;
-				if(comp_data_zstd->dictionary_size > 0) {
-					int dict_size = comp_data_zstd->dictionary_size;
-
-					write_destination(fd, l_bytes, dict_size, &comp_data_zstd->dictionary);
-					l_bytes += dict_size;
-				} 
+			// Check if zstd dictionary exists
+			if(zstd_dict_size > 0) {
+				write_destination(fd, sizeof(struct squashfs_super_block) +
+					sizeof(c_byte) + size, zstd_dict_size, zstd_dict);
 			}
 
-			bytes = l_bytes;
+			bytes = sizeof(struct squashfs_super_block) + sizeof(c_byte)
+				+ size + zstd_dict_size;
 			comp_opts = TRUE;
 		} else
 			bytes = sizeof(struct squashfs_super_block);

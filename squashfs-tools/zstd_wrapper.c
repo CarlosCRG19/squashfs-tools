@@ -143,7 +143,7 @@ failed:
  * to be stored (and the size), or NULL if there are no compression
  * options.
  */
-static void *zstd_dump_options(int block_size, int *size)
+static void *zstd_dump_options(int block_size, int *size, void **dict, int *dict_size)
 {
 	static struct zstd_comp_opts comp_opts;
 
@@ -153,9 +153,9 @@ static void *zstd_dump_options(int block_size, int *size)
 
 	comp_opts.compression_level = compression_level;
 	
-	// New options
-	comp_opts.dictionary_size = dictionary_size;
-	comp_opts.dictionary = dictionary;
+	// New options (global)
+	*dict_size = dictionary_size;
+	*dict = dictionary;
 
 	SQUASHFS_INSWAP_COMP_OPTS(&comp_opts);
 
@@ -207,14 +207,6 @@ static int zstd_extract_options(int block_size, void *buffer, int size)
 	}
 
 	compression_level = comp_opts->compression_level;
-	
-	if (comp_opts->dictionary_size < 0) {
-		fprintf(stderr, "zstd: incorrect size of dictionary in compression"
-			"options structure\n");
-		goto failed;
-	}
-
-	dictionary_size = comp_opts->dictionary_size;
 
 	return 0;
 
@@ -243,14 +235,6 @@ static void zstd_display_options(void *buffer, int size)
 	}
 
 	printf("\tcompression-level %d\n", comp_opts->compression_level);
-
-	if (comp_opts->dictionary_size < 0) {
-		fprintf(stderr, "zstd: incorrect size of dictionary in compression"
-			"options structure\n");
-		goto failed;
-	}
-
-	printf("\tdictionary-size %d\n", comp_opts->dictionary_size); 
 
 	return;
 
@@ -337,7 +321,7 @@ struct compressor zstd_comp_ops = {
 	.compress = zstd_compress,
 	.uncompress = zstd_uncompress,
 	.options = zstd_options,
-	.dump_options = zstd_dump_options,
+	.dump_options_zstd = zstd_dump_options,
 	.extract_options = zstd_extract_options,
 	.display_options = zstd_display_options,
 	.usage = zstd_usage,

@@ -36,6 +36,7 @@ struct compressor {
 	int (*check_options)(int, void *, int);
 	void (*display_options)(void *, int);
 	void (*usage)(FILE *);
+	void *(*dump_options_zstd)(int, int *, void **, int *);
 };
 
 extern struct compressor *lookup_compressor(char *);
@@ -89,10 +90,14 @@ static inline int compressor_options_post(struct compressor *comp, int block_siz
 
 
 static inline void *compressor_dump_options(struct compressor *comp,
-	int block_size, int *size)
+	int block_size, int *size, void **zstd_dict, int *zstd_dict_size)
 {
-	if(comp->dump_options == NULL)
+	if(comp->dump_options == NULL && strcmp(comp->name, "zstd") != 0)
 		return NULL;
+	
+	if(strcmp(comp->name, "zstd") == 0)
+		return comp->dump_options_zstd(block_size, size, zstd_dict, zstd_dict_size);
+	
 	return comp->dump_options(block_size, size);
 }
 
