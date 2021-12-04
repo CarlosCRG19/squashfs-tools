@@ -38,6 +38,7 @@ static int compression_level = ZSTD_DEFAULT_COMPRESSION_LEVEL;
 static int dictionary_size = 0;
 static char* dict_name = EMPTY_STRING;
 static void* dictionary;
+static ZSTD_CDict* cdict = NULL;
 
 /* load_dict()
 	Load dictionary to passed buffer */ 
@@ -124,6 +125,7 @@ static int zstd_options(char *argv[], int argc)
 		// Dictionary Loading  
 		dictionary = malloc(dictionary_size);
 		load_dict(dict_name, dictionary, dictionary_size);
+		cdict = create_cdict(dictionary, dictionary_size, compression_level);
 
 		return 1;
 	}
@@ -152,6 +154,7 @@ static void *zstd_dump_options(int block_size, int *size, void **dict, int *dict
 		return NULL;
 
 	comp_opts.compression_level = compression_level;
+	comp_opts.dictionary_size = dictionary_size;
 	
 	// New options (global)
 	*dict_size = dictionary_size;
@@ -160,6 +163,7 @@ static void *zstd_dump_options(int block_size, int *size, void **dict, int *dict
 	SQUASHFS_INSWAP_COMP_OPTS(&comp_opts);
 
 	*size = sizeof(comp_opts);
+	// BAD_ERROR("Compression data real size: %d", sizeof(comp_opts));
 	return &comp_opts;
 }
 
@@ -268,9 +272,8 @@ static int zstd_compress(void *strm, void *dest, void *src, int size,
 {
 	size_t res;
 	if (dictionary_size != 0) {
-		ZSTD_CDict* const dict_ptr = create_cdict(dictionary, dictionary_size, compression_level);
 		res = ZSTD_compress_usingCDict((ZSTD_CCtx*)strm, dest, block_size,
-							src, size, dict_ptr);
+							src, size, cdict);
 	} else {
 		res = ZSTD_compressCCtx((ZSTD_CCtx*)strm, dest, block_size,
 							src, size, compression_level);
